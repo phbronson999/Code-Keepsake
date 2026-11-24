@@ -1,0 +1,17 @@
+[package]
+name = "code-keepsake"
+description = "Put rarely used repos away safely and keep your VS Code workspaces intact."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "code-keepsake"
+path = "src/main.rs"
+
+[dependencies]
+keepsake-core = { path = "../keepsake-core" }
+anyhow.workspace = true
+serde_json.workspace = true
+ratatui = "0.29"
