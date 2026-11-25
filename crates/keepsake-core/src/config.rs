@@ -2,7 +2,7 @@
 //! Windows: %APPDATA%\code-keepsake\config.json
 //! Elsewhere: $XDG_CONFIG_HOME/code-keepsake/config.json (or ~/.config/…)
 
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,13 +15,23 @@ pub struct Config {
     pub sources: Vec<PathBuf>,
     /// How many folder levels deep to search each source.
     pub search_depth: usize,
+    /// How many levels below each workspace folder to look for `.git`, per workspace
+    /// file name. Missing entries use `repo_depth_default`.
+    pub repo_depth: BTreeMap<String, usize>,
+    /// 0 means a workspace folder is just the one repo it points at (or inside).
+    pub repo_depth_default: usize,
 }
+
+/// Deepest nested-repo search the UI allows.
+pub const MAX_REPO_DEPTH: usize = 6;
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             sources: Vec::new(),
             search_depth: 3,
+            repo_depth: BTreeMap::new(),
+            repo_depth_default: 0,
         }
     }
 }
@@ -38,6 +48,23 @@ pub fn config_dir() -> Option<PathBuf> {
 }
 
 impl Config {
+    pub fn depth_for(&self, workspace: &str) -> usize {
+        self.repo_depth
+            .get(workspace)
+            .copied()
+            .unwrap_or(self.repo_depth_default)
+    }
+
+    /// Sets a workspace's depth, dropping the entry when it matches the default.
+    pub fn set_depth(&mut self, workspace: &str, depth: usize) {
+        let depth = depth.min(MAX_REPO_DEPTH);
+        if depth == self.repo_depth_default {
+            self.repo_depth.remove(workspace);
+        } else {
+            self.repo_depth.insert(workspace.to_string(), depth);
+        }
+    }
+
     pub fn path() -> Option<PathBuf> {
         config_dir().map(|d| d.join("config.json"))
     }

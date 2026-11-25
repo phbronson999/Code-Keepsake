@@ -50,35 +50,52 @@ fn folder_name(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-pub fn collect_targets(workspaces: &[WorkspaceFile]) -> Vec<RepoTarget> {
+/// `depth_for` gives, per workspace name, how many levels below each folder to look
+/// for repos. 0 treats a folder as the one repo it is (or sits inside).
+pub fn collect_targets(
+    workspaces: &[WorkspaceFile],
+    depth_for: impl Fn(&str) -> usize,
+) -> Vec<RepoTarget> {
     let mut targets: Vec<RepoTarget> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
 
     for ws in workspaces {
+        let depth = depth_for(&ws.name);
         for folder in &ws.folders {
-            let root = resolve_root(&folder.path);
-            let is_root = workspace::path_key(&root) == workspace::path_key(&folder.path);
-            let i = *index.entry(workspace::path_key(&root)).or_insert_with(|| {
-                let name = folder
-                    .name
-                    .clone()
-                    .filter(|_| is_root)
-                    .unwrap_or_else(|| folder_name(&root));
-                targets.push(RepoTarget {
-                    path: root.clone(),
-                    name,
-                    workspaces: Vec::new(),
-                    subfolders: Vec::new(),
-                });
-                targets.len() - 1
-            });
-
-            let target = &mut targets[i];
-            if !target.workspaces.contains(&ws.name) {
-                target.workspaces.push(ws.name.clone());
+            // (repo root, whether the workspace folder is that root, name override)
+            let mut roots: Vec<(PathBuf, bool, Option<String>)> = Vec::new();
+            if depth > 0 && !git::has_git_dir(&folder.path) {
+                for repo in workspace::find_repos(&folder.path, depth) {
+                    roots.push((repo, true, None));
+                }
             }
-            if !is_root && !target.subfolders.contains(&folder.path) {
-                target.subfolders.push(folder.path.clone());
+            if roots.is_empty() {
+                let root = resolve_root(&folder.path);
+                let is_root = workspace::path_key(&root) == workspace::path_key(&folder.path);
+                roots.push((root, is_root, folder.name.clone()));
+            }
+
+            for (root, is_root, name_override) in roots {
+                let i = *index.entry(workspace::path_key(&root)).or_insert_with(|| {
+                    let name = name_override
+                        .filter(|_| is_root)
+                        .unwrap_or_else(|| folder_name(&root));
+                    targets.push(RepoTarget {
+                        path: root.clone(),
+                        name,
+                        workspaces: Vec::new(),
+                        subfolders: Vec::new(),
+                    });
+                    targets.len() - 1
+                });
+
+                let target = &mut targets[i];
+                if !target.workspaces.contains(&ws.name) {
+                    target.workspaces.push(ws.name.clone());
+                }
+                if !is_root && !target.subfolders.contains(&folder.path) {
+                    target.subfolders.push(folder.path.clone());
+                }
             }
         }
     }

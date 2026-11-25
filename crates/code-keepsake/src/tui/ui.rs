@@ -307,8 +307,13 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     for (i, name) in tabs.iter().enumerate() {
         let count = app.tab_count(i);
         if i == app.tab {
+            let depth = if i == 0 {
+                String::new()
+            } else {
+                format!(" · depth {}", app.config.depth_for(name))
+            };
             left.push(Span::styled(
-                format!(" {name} {count} "),
+                format!(" {name} {count}{depth} "),
                 Style::new()
                     .fg(theme::TEXT)
                     .bg(theme::SELECTION)
@@ -915,6 +920,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Screen::Repos => &[
             ("↑↓", "move"),
             ("tab", "workspace"),
+            ("p m", "depth"),
             ("1 2 3", "level"),
             ("s", "put away"),
             ("f", "fetch"),
@@ -994,6 +1000,7 @@ fn draw_help(f: &mut Frame, app: &App, screen: Rect) {
             row("tab", "next workspace (shift+tab, ← → also work)"),
             row("o", "change sort order"),
             row("/", "filter by name or path"),
+            row("p m", "look deeper (p) or shallower (m) for repos inside this workspace's folders"),
             row("f", "fetch the selected repo and check it again"),
             row("r", "rescan everything"),
             row("1 2 3", "choose how far to put repos away"),

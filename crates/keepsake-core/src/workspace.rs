@@ -100,6 +100,38 @@ pub fn path_key(path: &Path) -> String {
 
 const SKIP_DIRS: &[&str] = &["node_modules", "target", "dist", "build", "bin", "obj", "AppData"];
 
+/// Finds git repos at or below `root`, up to `max_depth` levels down. A folder with
+/// `.git` (a directory, or a file for worktrees and submodules) is a repo and is not
+/// searched further. Symlinks are not followed.
+pub fn find_repos(root: &Path, max_depth: usize) -> Vec<PathBuf> {
+    fn walk(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+        if dir.join(".git").exists() {
+            out.push(dir.to_path_buf());
+            return;
+        }
+        if depth >= max_depth {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if file_type.is_dir() && !name.starts_with('.') && !SKIP_DIRS.contains(&name.as_str()) {
+                walk(&entry.path(), depth + 1, max_depth, out);
+            }
+        }
+    }
+
+    let mut found = Vec::new();
+    walk(root, 0, max_depth, &mut found);
+    found.sort_by_key(|p| path_key(p));
+    found
+}
+
 /// Finds `.code-workspace` files. File arguments are used as given; folders are
 /// searched up to `max_depth` levels, skipping hidden and build folders.
 pub fn discover(inputs: &[PathBuf], max_depth: usize) -> Vec<PathBuf> {
@@ -135,4 +167,46 @@ pub fn discover(inputs: &[PathBuf], max_depth: usize) -> Vec<PathBuf> {
     found.sort_by_key(|p| path_key(p));
     found.dedup_by_key(|p| path_key(p));
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tree(tag: &str, dirs: &[&str]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("keepsake-ws-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for d in dirs {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn find_repos_respects_depth_and_does_not_nest() {
+        let root = tree(
+            "depth",
+            &["a/.git", "group/b/.git", "group/deep/c/.git", "a/inner/.git", "node_modules/x/.git"],
+        );
+        let names = |depth| -> Vec<String> {
+            find_repos(&root, depth)
+                .iter()
+                .map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/"))
+                .collect()
+        };
+        assert_eq!(names(0), Vec::<String>::new());
+        assert_eq!(names(1), vec!["a"]);
+        assert_eq!(names(2), vec!["a", "group/b"]);
+        assert_eq!(names(3), vec!["a", "group/b", "group/deep/c"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn find_repos_accepts_git_file_and_repo_root() {
+        let root = tree("gitfile", &["wt"]);
+        std::fs::write(root.join("wt/.git"), "gitdir: elsewhere").unwrap();
+        assert_eq!(find_repos(&root, 1).len(), 1);
+        assert_eq!(find_repos(&root.join("wt"), 0), vec![root.join("wt")]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

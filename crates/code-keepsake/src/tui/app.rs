@@ -13,7 +13,7 @@ use std::{
 
 use keepsake_core::{
     analysis::{analyze, RepoAnalysis, RepoStatus},
-    config::Config,
+    config::{Config, MAX_REPO_DEPTH},
     fmt,
     plan::Level,
     scan::{collect_targets, spawn_scan, target_for_path, RepoTarget, ScanEvent},
@@ -326,7 +326,8 @@ impl App {
             .collect();
         self.workspaces.sort_by_key(|w| w.name.to_lowercase());
 
-        self.entries = collect_targets(&self.workspaces)
+        let config = &self.config;
+        self.entries = collect_targets(&self.workspaces, |name| config.depth_for(name))
             .into_iter()
             .map(|target| Entry {
                 target,
@@ -353,6 +354,40 @@ impl App {
             self.load_workspaces();
             self.start_scan(false);
         }
+    }
+
+    /// Changes how deep the current workspace tab looks for nested repos.
+    fn change_depth(&mut self, delta: isize) {
+        let Some(ws) = self.tab.checked_sub(1).and_then(|i| self.workspaces.get(i)) else {
+            self.notify("Pick a workspace tab to set its repo depth", ToastKind::Info);
+            return;
+        };
+        let name = ws.name.clone();
+        let current = self.config.depth_for(&name);
+        let next = current.saturating_add_signed(delta).min(MAX_REPO_DEPTH);
+        if next == current {
+            return;
+        }
+        if self.scan.running {
+            self.notify("Wait for the scan to finish, then change depth", ToastKind::Warn);
+            return;
+        }
+        self.config.set_depth(&name, next);
+        if let Err(e) = self.config.save() {
+            self.notify(format!("Couldn't save settings: {e}"), ToastKind::Warn);
+        }
+        self.load_workspaces();
+        // load_workspaces resets to the "All" tab; stay on this workspace.
+        if let Some(i) = self.workspaces.iter().position(|w| w.name == name) {
+            self.tab = i + 1;
+            self.rebuild_view();
+        }
+        self.start_scan(false);
+        let found = self.tab_count(self.tab);
+        self.notify(
+            format!("{name}: depth {next} · {found} repos"),
+            ToastKind::Info,
+        );
     }
 
     pub fn start_scan(&mut self, fetch: bool) {
@@ -862,6 +897,8 @@ impl App {
             KeyCode::End | KeyCode::Char('G') => self.move_by(isize::MAX / 2),
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.switch_tab(true),
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.switch_tab(false),
+            KeyCode::Char('p') => self.change_depth(1),
+            KeyCode::Char('m') => self.change_depth(-1),
             KeyCode::Char('o') => {
                 self.sort = self.sort.next();
                 self.rebuild_view();
