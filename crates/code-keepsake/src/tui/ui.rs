@@ -293,8 +293,11 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let mut left = vec![
         Span::styled(" ◆ ", theme::bold(theme::ACCENT)),
         Span::styled("code keepsake", theme::bold(theme::TEXT)),
-        Span::styled("   ", theme::faint()),
     ];
+    if app.demo.is_some() {
+        left.push(Span::styled(" DEMO · safe to delete ", theme::bold(theme::WARN)));
+    }
+    left.push(Span::styled("   ", theme::faint()));
     let place = match app.screen {
         Screen::Home => Some("home"),
         Screen::Sources => Some("home › workspace sources"),

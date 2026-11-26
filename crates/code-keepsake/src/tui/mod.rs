@@ -6,10 +6,11 @@ mod widgets;
 use std::{path::PathBuf, time::Duration};
 
 use anyhow::Result;
+use keepsake_core::sandbox::Sandbox;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
-pub fn run(extra_sources: Vec<PathBuf>) -> Result<()> {
-    let mut app = app::App::new(extra_sources);
+pub fn run(extra_sources: Vec<PathBuf>, demo: Option<Sandbox>) -> Result<()> {
+    let mut app = app::App::new(extra_sources, demo);
     app.start_scan(false);
 
     let mut terminal = ratatui::init();

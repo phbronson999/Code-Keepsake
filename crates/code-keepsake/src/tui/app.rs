@@ -16,6 +16,7 @@ use keepsake_core::{
     config::{Config, MAX_REPO_DEPTH},
     fmt,
     plan::Level,
+    sandbox::Sandbox,
     scan::{collect_targets, spawn_scan, target_for_path, RepoTarget, ScanEvent},
     workspace::{self, WorkspaceFile},
 };
@@ -193,6 +194,9 @@ pub struct App {
     pub show_help: bool,
 
     pub config: Config,
+    /// Set when running against the throwaway sandbox. Settings stay in memory so
+    /// the real config file is never touched.
+    pub demo: Option<Sandbox>,
     launch_sources: Vec<PathBuf>,
     pub sources: Vec<SourceInfo>,
     pub source_list: ListState,
@@ -225,14 +229,22 @@ fn clean_path_input(input: &str) -> PathBuf {
 }
 
 impl App {
-    pub fn new(launch_sources: Vec<PathBuf>) -> Self {
+    pub fn new(launch_sources: Vec<PathBuf>, demo: Option<Sandbox>) -> Self {
         let (tx, rx) = mpsc::channel();
+        let config = match &demo {
+            Some(sb) => Config {
+                sources: vec![sb.workspaces_dir.clone()],
+                ..Config::default()
+            },
+            None => Config::load(),
+        };
         let mut app = Self {
             screen: Screen::Home,
             menu: ListState::default().with_selected(Some(0)),
             prompt: None,
             show_help: false,
-            config: Config::load(),
+            config,
+            demo,
             launch_sources,
             sources: Vec::new(),
             source_list: ListState::default().with_selected(Some(0)),
@@ -343,10 +355,18 @@ impl App {
         self.rebuild_view();
     }
 
-    fn sources_changed(&mut self) {
+    /// Saves settings, except in the demo, which never writes the real config.
+    fn persist_config(&mut self) {
+        if self.demo.is_some() {
+            return;
+        }
         if let Err(e) = self.config.save() {
             self.notify(format!("Couldn't save settings: {e}"), ToastKind::Warn);
         }
+    }
+
+    fn sources_changed(&mut self) {
+        self.persist_config();
         if self.scan.running {
             self.reload_after_scan = true;
             self.notify("Saved. The list updates when this scan finishes.", ToastKind::Info);
@@ -373,9 +393,7 @@ impl App {
             return;
         }
         self.config.set_depth(&name, next);
-        if let Err(e) = self.config.save() {
-            self.notify(format!("Couldn't save settings: {e}"), ToastKind::Warn);
-        }
+        self.persist_config();
         self.load_workspaces();
         // load_workspaces resets to the "All" tab; stay on this workspace.
         if let Some(i) = self.workspaces.iter().position(|w| w.name == name) {

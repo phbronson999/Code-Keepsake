@@ -13,6 +13,7 @@ pub mod jsonc;
 pub mod parse;
 pub mod plan;
 pub mod safety;
+pub mod sandbox;
 pub mod scan;
 pub mod size;
 pub mod stub;
