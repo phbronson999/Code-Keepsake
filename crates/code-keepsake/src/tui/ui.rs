@@ -23,7 +23,7 @@ use ratatui::{
 };
 
 use super::{
-    app::{App, Entry, MenuAction, Prompt, Screen, SourceKind, ToastKind, MENU},
+    app::{App, Entry, MenuAction, Prompt, Screen, SourceKind, ToastKind},
     theme,
     widgets::{self, keycap},
 };
@@ -86,10 +86,13 @@ fn draw_home(f: &mut Frame, app: &mut App, body: Rect) {
             .spacing(1)
             .areas(body)
     } else {
-        Layout::vertical([Constraint::Length(23), Constraint::Min(0)]).areas(body)
+        // Three rows per option, plus the border and top padding.
+        let height = app.menu_items().len() as u16 * 3 + 3;
+        Layout::vertical([Constraint::Length(height), Constraint::Min(0)]).areas(body)
     };
 
-    let items: Vec<ListItem<'static>> = MENU
+    let items: Vec<ListItem<'static>> = app
+        .menu_items()
         .iter()
         .map(|item| {
             let quiet = item.action == MenuAction::Quit;
@@ -1001,7 +1004,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Screen::Home => &[
             ("↑↓", "choose"),
             ("enter", "open"),
-            ("b c r f w e", "shortcuts"),
+            (if app.demo.is_some() { "b c r f w e d x" } else { "b c r f w e d" }, "shortcuts"),
             ("1 2 3", "level"),
             ("?", "help"),
             ("q", "quit"),

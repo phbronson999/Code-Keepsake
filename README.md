@@ -45,6 +45,10 @@ Memento tells its story in reverse, so this README counts down too. You start at
 
 Don't trust a stranger with your folders. Make it prove itself on some that don't matter.
 
+On the launch page, press `d` for **Try the demo**. Inside it, `d` takes you back to your own repos and `x` rebuilds the demo from scratch.
+
+Or from a terminal (after [installing](#4-run-it)):
+
 ```powershell
 code-keepsake demo           # build the demo repos (if needed) and open them
 code-keepsake demo --reset   # start over with fresh ones
@@ -53,7 +57,7 @@ code-keepsake demo --clean   # delete them
 
 (From the source folder: `cargo run --release -- demo`.)
 
-The demo creates real git repos, real (local) remotes and three workspace files in your temp folder, under `code-keepsake-demo`. It works offline, keeps its settings in memory so your real ones are never touched, and says `DEMO · safe to delete` at the top. Removal in the demo is real removal, on repos made to be removed.
+The demo creates real git repos, real (local) remotes and three workspace files in your temp folder, under `code-keepsake-demo`. It works offline, keeps its settings in memory so your real ones are never touched, and says `DEMO · safe to delete` at the top. Removal in the demo is real removal, on repos made to be removed. Only repos inside the demo folder can be put away there.
 
 | Repo | What's going on | What to expect |
 |---|---|---|
@@ -68,11 +72,22 @@ The demo creates real git repos, real (local) remotes and three workspace files 
 
 ## 4. Run it
 
+You need [Rust](https://rustup.rs) to build it, and `git` on your PATH.
+
 ```powershell
+git clone https://github.com/phbronson999/Code-Keepsake.git
+cd Code-Keepsake
+cargo install --path crates/code-keepsake
 code-keepsake
 ```
 
-(From the source folder: `cargo run --release`.) You need `git` on your PATH.
+`cargo install` puts the `code-keepsake` command in Cargo's `bin` folder, which rustup adds to your PATH. It's a copy, and it has no memory of what happened after it was made: after pulling new changes, run the install again.
+
+| Command | What it does |
+|---|---|
+| `cargo install --path crates/code-keepsake` | Builds and installs (or updates) the `code-keepsake` command |
+| `cargo run --release` | Builds and runs from the source folder. Installs nothing. |
+| `cargo uninstall code-keepsake` | Removes the command |
 
 It opens on the launch page and starts scanning right away. Everything there has a single-letter shortcut, so even if you forget the letters you can still arrow down and press enter:
 
@@ -84,6 +99,7 @@ It opens on the launch page and starts scanning right away. Everything there has
 | `f` | **Rescan and fetch every remote** | Same, but check the facts against the remotes first. Slower, more trustworthy. |
 | `w` | **Workspace sources** | The folders to search for `.code-workspace` files. Set them once and they're saved, like a tattoo, minus the regret. |
 | `e` | **Export report** | Writes `code-keepsake-report.json` to the current folder, for scripts that also can't remember anything |
+| `d` | **Try the demo** | Throwaway repos for [trying it safely](#5-try-it-safely) |
 | `q` | **Quit** | You won't remember this. The stubs will. |
 
 ### The repo browser

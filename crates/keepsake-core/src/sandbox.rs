@@ -175,6 +175,15 @@ pub fn create(dir: &Path) -> Result<Sandbox> {
     })
 }
 
+/// Reuses the sandbox at `dir` so a half-way session can be picked up again,
+/// building one if there is none or it was never finished.
+pub fn open_or_create(dir: &Path) -> Result<Sandbox> {
+    match open(dir) {
+        Ok(sandbox) if !sandbox.repos.is_empty() => Ok(sandbox),
+        _ => create(dir),
+    }
+}
+
 /// Reopens a sandbox made earlier by [`create`].
 pub fn open(dir: &Path) -> Result<Sandbox> {
     if !is_sandbox(dir) {

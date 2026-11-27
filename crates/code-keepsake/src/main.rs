@@ -38,10 +38,8 @@ fn demo(flag: Option<&str>) -> anyhow::Result<()> {
             Ok(())
         }
         None | Some("--reset") => {
-            // Reuse an existing demo unless asked to rebuild it, so a half-way
-            // session can be picked up again.
-            let sb = if flag.is_none() && sandbox::is_sandbox(&dir) {
-                sandbox::open(&dir)?
+            let sb = if flag.is_none() {
+                sandbox::open_or_create(&dir)?
             } else {
                 sandbox::create(&dir)?
             };

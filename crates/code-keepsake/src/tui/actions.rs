@@ -15,6 +15,7 @@ use keepsake_core::{
     execute::{self, ExecReport},
     fmt,
     plan::Level,
+    sandbox::{self, Sandbox},
     scan::RepoTarget,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -63,6 +64,7 @@ impl Confirm {
 pub enum JobEvent {
     Preview(PathBuf, Action, Result<ExecReport, String>),
     Done(Action, Result<Option<ExecReport>, String>, Box<RepoAnalysis>),
+    DemoReady(Result<Sandbox, String>),
 }
 
 fn preview(target: RepoTarget, level: Level, tx: Sender<JobEvent>) {
@@ -73,10 +75,36 @@ fn preview(target: RepoTarget, level: Level, tx: Sender<JobEvent>) {
 }
 
 impl App {
+    /// Opens the demo, building it first if needed (or always, with `reset`).
+    /// Building runs in the background; it takes a few seconds.
+    pub fn build_demo(&mut self, reset: bool) {
+        if self.scan.running || self.job_running {
+            self.notify("Wait for the current work to finish", ToastKind::Warn);
+            return;
+        }
+        self.job_running = true;
+        self.notify("Building the demo repos…", ToastKind::Info);
+        let tx = self.job_tx.clone();
+        thread::spawn(move || {
+            let dir = sandbox::default_dir();
+            let result = if reset {
+                sandbox::create(&dir)
+            } else {
+                sandbox::open_or_create(&dir)
+            };
+            let _ = tx.send(JobEvent::DemoReady(result.map_err(|e| e.to_string())));
+        });
+    }
+
     pub fn open_confirm(&mut self) {
         let Some(entry) = self.selected() else { return };
         let target = entry.target.clone();
         let status = entry.analysis.as_ref().map(|a| a.status);
+        // A real repo can be added while in the demo; the banner mustn't lie about it.
+        if self.demo.as_ref().is_some_and(|sb| !sandbox::contains(&sb.root, &target.path)) {
+            self.notify("That's not a demo repo. Leave the demo to put it away.", ToastKind::Warn);
+            return;
+        }
         if self.scan.running || entry.busy {
             self.notify("Wait for the scan to finish first", ToastKind::Warn);
             return;
@@ -182,6 +210,7 @@ impl App {
 
     /// Takes in finished previews and jobs. Called once per frame.
     pub fn pump_jobs(&mut self) {
+        // (Switching to the demo replaces `job_rx`, which then has nothing queued.)
         while let Ok(event) = self.job_rx.try_recv() {
             match event {
                 JobEvent::Preview(path, action, result) => {
@@ -192,6 +221,14 @@ impl App {
                     }
                 }
                 JobEvent::Done(action, result, analysis) => self.finish_job(action, result, *analysis),
+                JobEvent::DemoReady(Ok(sb)) => {
+                    self.switch_to(Some(sb));
+                    self.notify("Demo ready. Press b to browse it.", ToastKind::Success);
+                }
+                JobEvent::DemoReady(Err(e)) => {
+                    self.job_running = false;
+                    self.notify(format!("Couldn't build the demo: {e}"), ToastKind::Warn);
+                }
             }
         }
     }
@@ -229,7 +266,6 @@ impl App {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use keepsake_core::sandbox;
     use ratatui::{backend::TestBackend, crossterm::event::KeyModifiers, Terminal};
 
     use super::*;
@@ -256,6 +292,36 @@ mod tests {
     fn select(app: &mut App, name: &str) {
         let row = app.view.iter().position(|&i| app.entries[i].target.name == name).unwrap();
         app.table.select(Some(row));
+    }
+
+    #[test]
+    fn demo_option_and_its_guard() {
+        let dir = std::env::temp_dir().join(format!("keepsake-menu-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sb = sandbox::create(&dir).unwrap();
+        let root = sb.root.clone();
+        let outside = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+        // Command-line paths are left out of the demo.
+        let mut app = App::new(vec![outside.clone()], Some(sb));
+        assert!(app.entries.iter().all(|e| e.target.path.starts_with(&root)));
+        let keys: String = app.menu_items().iter().map(|m| m.key).collect();
+        assert_eq!(keys, "bcrfwedxq");
+
+        // A real repo brought into the demo can't be put away from it.
+        app.entries[0].target.path = outside;
+        app.view = vec![0];
+        app.table.select(Some(0));
+        app.open_confirm();
+        assert!(app.confirm.is_none());
+
+        // `d` leaves the demo and offers it again.
+        press(&mut app, KeyCode::Char('d'));
+        assert!(app.demo.is_none());
+        let keys: String = app.menu_items().iter().map(|m| m.key).collect();
+        assert_eq!(keys, "bcrfwedq");
+
+        sandbox::destroy(&root).unwrap();
     }
 
     #[test]

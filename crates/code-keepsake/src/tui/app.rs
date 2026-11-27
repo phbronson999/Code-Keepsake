@@ -58,23 +58,26 @@ pub enum MenuAction {
     RescanFetch,
     Sources,
     Export,
+    EnterDemo,
+    LeaveDemo,
+    ResetDemo,
     Quit,
 }
 
+#[derive(Clone, Copy)]
 pub struct MenuItem {
     pub key: char,
     pub title: &'static str,
     pub action: MenuAction,
 }
 
-pub const MENU: [MenuItem; 7] = [
+const MENU_START: [MenuItem; 6] = [
     MenuItem { key: 'b', title: "Browse repos", action: MenuAction::Browse },
     MenuItem { key: 'c', title: "Check a repo by path", action: MenuAction::Check },
     MenuItem { key: 'r', title: "Rescan", action: MenuAction::Rescan },
     MenuItem { key: 'f', title: "Rescan and fetch every remote", action: MenuAction::RescanFetch },
     MenuItem { key: 'w', title: "Workspace sources", action: MenuAction::Sources },
     MenuItem { key: 'e', title: "Export report", action: MenuAction::Export },
-    MenuItem { key: 'q', title: "Quit", action: MenuAction::Quit },
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -302,7 +305,9 @@ impl App {
                 .map(|p| (p.clone(), SourceKind::Saved))
                 .collect()
         };
-        for extra in &self.launch_sources {
+        // The demo shows only its own repos.
+        let extras = self.launch_sources.iter().filter(|_| self.demo.is_none());
+        for extra in extras {
             let extra = workspace::absolute(extra);
             if !list.iter().any(|(p, _)| workspace::path_key(p) == workspace::path_key(&extra)) {
                 list.push((extra, SourceKind::Launch));
@@ -707,8 +712,34 @@ impl App {
                 if self.sources.len() == 1 { "place" } else { "places" }
             ),
             MenuAction::Export => "Save everything to code-keepsake-report.json here.".into(),
+            MenuAction::EnterDemo => "Throwaway repos for trying everything safely.".into(),
+            MenuAction::LeaveDemo => "Go back to your own repos.".into(),
+            MenuAction::ResetDemo => "Rebuild the demo repos from scratch.".into(),
             MenuAction::Quit => "You won't remember this. The stubs will.".into(),
         }
+    }
+
+    /// The Home options, which differ inside the demo.
+    pub fn menu_items(&self) -> Vec<MenuItem> {
+        let mut items = MENU_START.to_vec();
+        if self.demo.is_some() {
+            items.push(MenuItem { key: 'd', title: "Leave the demo", action: MenuAction::LeaveDemo });
+            items.push(MenuItem { key: 'x', title: "Reset the demo", action: MenuAction::ResetDemo });
+        } else {
+            items.push(MenuItem { key: 'd', title: "Try the demo", action: MenuAction::EnterDemo });
+        }
+        items.push(MenuItem { key: 'q', title: "Quit", action: MenuAction::Quit });
+        items
+    }
+
+    /// Starts over on the real repos or the demo ones, as if just launched.
+    pub(super) fn switch_to(&mut self, demo: Option<Sandbox>) {
+        let launch_sources = std::mem::take(&mut self.launch_sources);
+        // Quitting while the demo was being built still counts.
+        let quit = self.quit;
+        *self = App::new(launch_sources, demo);
+        self.quit = quit;
+        self.start_scan(false);
     }
 
     fn activate(&mut self, action: MenuAction) {
@@ -731,6 +762,15 @@ impl App {
             MenuAction::RescanFetch => self.start_scan(true),
             MenuAction::Sources => self.screen = Screen::Sources,
             MenuAction::Export => self.export_report(),
+            MenuAction::EnterDemo => self.build_demo(false),
+            MenuAction::ResetDemo => self.build_demo(true),
+            MenuAction::LeaveDemo => {
+                if self.job_running {
+                    self.notify("Wait for the current job to finish", ToastKind::Warn);
+                } else {
+                    self.switch_to(None);
+                }
+            }
             MenuAction::Quit => self.quit = true,
         }
     }
@@ -869,21 +909,22 @@ impl App {
     }
 
     fn on_home_key(&mut self, key: KeyEvent) {
-        let selected = self.menu.selected().unwrap_or(0);
+        let menu = self.menu_items();
+        let selected = self.menu.selected().unwrap_or(0).min(menu.len() - 1);
         match key.code {
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                self.menu.select(Some((selected + 1) % MENU.len()))
+                self.menu.select(Some((selected + 1) % menu.len()))
             }
             KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
-                self.menu.select(Some((selected + MENU.len() - 1) % MENU.len()))
+                self.menu.select(Some((selected + menu.len() - 1) % menu.len()))
             }
-            KeyCode::Enter | KeyCode::Right => self.activate(MENU[selected].action),
+            KeyCode::Enter | KeyCode::Right => self.activate(menu[selected].action),
             KeyCode::Esc => self.quit = true,
             KeyCode::Char(c @ ('1' | '2' | '3')) => self.level = Level::ALL[(c as u8 - b'1') as usize],
             KeyCode::Char(c) => {
-                if let Some(pos) = MENU.iter().position(|m| m.key == c) {
+                if let Some(pos) = menu.iter().position(|m| m.key == c) {
                     self.menu.select(Some(pos));
-                    self.activate(MENU[pos].action);
+                    self.activate(menu[pos].action);
                 }
             }
             _ => {}
