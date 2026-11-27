@@ -1,8 +1,8 @@
 //! `.keepsake.json`: the file left behind in a folder that was put away.
 //! It is the record of truth for that repo; the central index is only a cache.
-//! (Writing stubs arrives with the `store` command; reading them works now.)
+//! Extra files restore needs sit next to it in `.keepsake/`.
 
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -10,9 +10,11 @@ use crate::{
     git::{Head, Remote},
     plan::Level,
     size::SizeBreakdown,
+    Error, Result,
 };
 
 pub const STUB_FILE: &str = ".keepsake.json";
+pub const STUB_DIR: &str = ".keepsake";
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,10 +43,15 @@ pub struct Preserved {
     pub bundle_refs: Vec<String>,
     /// One ref per stash (`refs/keepsake/stash/N`), restored oldest first.
     pub stashes: Vec<StashRecord>,
-    /// Zip of important ignored files (`.env`, keys, local settings).
-    pub ignored_archive: Option<String>,
+    /// Every local branch and tag, so restore can recreate them.
+    pub refs: Vec<SavedRef>,
     pub hooks: Vec<String>,
-    pub local_config: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedRef {
+    pub name: String,
+    pub sha: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,4 +63,10 @@ pub struct StashRecord {
 pub fn read(dir: &Path) -> Option<KeepsakeStub> {
     let text = std::fs::read_to_string(dir.join(STUB_FILE)).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+pub fn write(dir: &Path, stub: &KeepsakeStub) -> Result<()> {
+    let path = dir.join(STUB_FILE);
+    let text = serde_json::to_string_pretty(stub).map_err(|e| Error::io(&path, e.into()))?;
+    std::fs::write(&path, text).map_err(|e| Error::io(&path, e))
 }

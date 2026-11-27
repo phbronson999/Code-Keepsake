@@ -6,6 +6,7 @@
 pub mod analysis;
 pub mod config;
 pub mod error;
+pub mod execute;
 pub mod fmt;
 pub mod fsmeasure;
 pub mod git;

@@ -33,7 +33,7 @@ impl Level {
     pub fn tagline(self) -> &'static str {
         match self {
             Level::Clean => "delete build output, repo stays usable",
-            Level::Hollow => "keep history, empty the folder",
+            Level::Hollow => "keep history, remove the files",
             Level::Full => "keep only a stub, clone again on restore",
         }
     }
@@ -50,8 +50,8 @@ impl Level {
     pub fn bytes_freed(self, sizes: &SizeBreakdown) -> u64 {
         match self {
             Level::Clean => sizes.build,
-            Level::Hollow => sizes.build + sizes.source + sizes.ignored_other,
-            Level::Full => sizes.total(),
+            Level::Hollow => sizes.build + sizes.source,
+            Level::Full => sizes.build + sizes.source + sizes.git,
         }
     }
 
@@ -98,14 +98,15 @@ pub fn plan(level: Level, sizes: &SizeBreakdown, safety: Option<&SafetyReport>) 
                 steps.push("Fetch and confirm the remote has every commit".to_string());
             }
             if !preserve.is_empty() {
-                steps.push(format!("Save to the stub: {}", preserve.join(", ").to_lowercase()));
+                steps.push(format!("Keep safe: {}", preserve.join(", ").to_lowercase()));
             }
             steps.push("Write .keepsake.json with remotes, branch and commit".to_string());
             steps.push(if level == Level::Hollow {
-                "Empty the folder but keep .git".to_string()
+                "Delete tracked files and build folders, keep .git".to_string()
             } else {
-                "Delete everything except the stub".to_string()
+                "Delete tracked files, build folders and .git".to_string()
             });
+            steps.push("Leave other ignored files (.env, local data) in place".to_string());
         }
     }
 

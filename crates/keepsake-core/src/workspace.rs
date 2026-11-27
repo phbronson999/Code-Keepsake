@@ -105,7 +105,7 @@ const SKIP_DIRS: &[&str] = &["node_modules", "target", "dist", "build", "bin", "
 /// searched further. Symlinks are not followed.
 pub fn find_repos(root: &Path, max_depth: usize) -> Vec<PathBuf> {
     fn walk(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
-        if dir.join(".git").exists() {
+        if dir.join(".git").exists() || dir.join(crate::stub::STUB_FILE).is_file() {
             out.push(dir.to_path_buf());
             return;
         }

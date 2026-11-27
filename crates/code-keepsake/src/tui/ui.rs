@@ -27,6 +27,7 @@ use super::{
     theme,
     widgets::{self, keycap},
 };
+use super::actions::{Action, Confirm};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let [header, _, cards, body, footer] = Layout::vertical([
@@ -52,6 +53,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let screen = f.area();
     if let Some(prompt) = &app.prompt {
         draw_prompt(f, prompt, screen);
+    }
+    if let Some(confirm) = &app.confirm {
+        draw_confirm(f, confirm, app.tick, screen);
     }
     if app.show_help {
         draw_help(f, app, screen);
@@ -279,6 +283,89 @@ fn draw_prompt(f: &mut Frame, prompt: &Prompt, screen: Rect) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+// ── confirm ─────────────────────────────────────────────────────────────────
+
+fn draw_confirm(f: &mut Frame, confirm: &Confirm, tick: u64, screen: Rect) {
+    let area = widgets::centered(screen, 78, 22);
+    f.render_widget(Clear, area);
+    let color = if confirm.action.needs_name() { theme::WARN } else { theme::ACCENT };
+    let block = Block::bordered()
+        .border_type(BorderType::Plain)
+        .border_style(theme::fg(color))
+        .title(Line::from(Span::styled(
+            format!(" {} {} ", confirm.action.label(), confirm.target.name),
+            theme::bold(color),
+        )))
+        .padding(Padding::new(2, 2, 1, 0));
+    let width = area.width.saturating_sub(6) as usize;
+    let mut lines = vec![
+        Line::from(Span::styled(widgets::short_path(&confirm.target.path, width), theme::faint())),
+        Line::default(),
+    ];
+    let muted = |s: &str| Line::from(Span::styled(s.to_string(), theme::muted()));
+
+    match (confirm.action, &confirm.preview) {
+        (Action::Restore, _) => {
+            lines.push(muted("Brings back .git (if it was removed) and every tracked file."));
+            lines.push(muted("Existing files aren't overwritten. Build folders aren't rebuilt."));
+        }
+        (_, None) => lines.push(Line::from(vec![
+            Span::styled(widgets::spinner(tick), theme::fg(theme::ACCENT)),
+            Span::styled(" Checking what would happen…", theme::muted()),
+        ])),
+        (_, Some(Err(e))) => lines.push(Line::from(Span::styled(e.clone(), theme::fg(theme::BAD)))),
+        (_, Some(Ok(report))) if !report.blocked.is_empty() => {
+            lines.push(Line::from(Span::styled("Blocked. Nothing will be changed.", theme::bold(theme::BAD))));
+            lines.extend(report.blocked.iter().map(|b| muted(&format!("• {b}"))));
+        }
+        (_, Some(Ok(report))) if report.actions.is_empty() => {
+            lines.push(muted("Nothing to do: there are no build folders here."));
+        }
+        (action, Some(Ok(report))) => {
+            lines.push(Line::from(Span::styled(
+                format!("Frees {}", fmt::bytes(report.bytes_freed)),
+                theme::bold(theme::OK),
+            )));
+            lines.extend(report.actions.iter().take(6).map(|a| muted(&format!("• {a}"))));
+            if report.actions.len() > 6 {
+                lines.push(muted(&format!("  and {} more", report.actions.len() - 6)));
+            }
+            lines.push(Line::default());
+            match action {
+                Action::PutAway(Level::Clean) => lines.push(muted("Source, history and settings are not touched.")),
+                Action::PutAway(level) => {
+                    lines.push(muted("Other ignored files (.env, local data) stay where they are."));
+                    if level == Level::Full {
+                        lines.push(muted("Local commits and stashes are bundled in .keepsake/."));
+                        lines.push(muted("Commits only reachable from the reflog are not kept."));
+                    }
+                }
+                Action::Restore => {}
+            }
+        }
+    }
+
+    lines.push(Line::default());
+    if confirm.ready() {
+        if confirm.action.needs_name() {
+            lines.push(Line::from(vec![
+                Span::styled("Type ", theme::muted()),
+                Span::styled(confirm.target.name.clone(), theme::bold(theme::TEXT)),
+                Span::styled(" and press enter  › ", theme::muted()),
+                Span::styled(confirm.typed.clone(), theme::text()),
+                Span::styled("▏", theme::fg(color)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled("y", theme::bold(color)),
+                Span::styled(" to confirm", theme::muted()),
+            ]));
+        }
+    }
+    lines.push(Line::from(Span::styled("esc to cancel", theme::faint())));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).block(block), area);
+}
+
 fn panel(title: Vec<Span<'static>>) -> Block<'static> {
     Block::bordered()
         .border_type(BorderType::Plain)
@@ -483,7 +570,7 @@ fn analysis_cells(a: &RepoAnalysis, busy: bool, app: &App) -> Vec<Cell<'static>>
 
     match a.status {
         RepoStatus::Kept => {
-            let saved = a.stub.as_ref().map_or(0, |s| s.sizes_before.total());
+            let saved = a.stub.as_ref().map_or(0, |s| s.level.bytes_freed(&s.sizes_before));
             let level = a.stub.as_ref().map_or("", |s| s.level.label());
             vec![
                 two_lines(
@@ -500,7 +587,7 @@ fn analysis_cells(a: &RepoAnalysis, busy: bool, app: &App) -> Vec<Cell<'static>>
                 ),
                 two_lines(
                     Line::from(Span::styled("◇ kept", theme::fg(theme::KEPT))),
-                    Line::from(dim("r to restore")),
+                    Line::from(dim("s to restore")),
                 ),
             ]
         }
@@ -738,10 +825,17 @@ fn detail_lines(a: &RepoAnalysis, entry: &Entry, app: &App, width: usize, lines:
                         muted(format!("  {}", fmt::age_long(app.now - stub.stored_at_unix))),
                     ],
                 ));
-                lines.push(kv("Saved", vec![text(fmt::bytes(stub.sizes_before.total()))]));
+                lines.push(kv("Saved", vec![text(fmt::bytes(stub.level.bytes_freed(&stub.sizes_before)))]));
                 for r in stub.remotes.iter().take(2) {
                     lines.push(kv("Remote", vec![muted(format!("{} ", r.name)), text(r.fetch_url.clone())]));
                 }
+                lines.push(Line::default());
+                lines.push(kv("Record", vec![text(keepsake_core::stub::STUB_FILE.into())]));
+                if stub.level == Level::Full {
+                    lines.push(kv("Extras", vec![text(format!("{}/", keepsake_core::stub::STUB_DIR))]));
+                }
+                lines.push(Line::default());
+                lines.push(Line::from(muted("Press e to open the folder, s to restore.".into())));
                 if let Some(head) = &stub.head {
                     lines.push(kv(
                         "Branch",
@@ -925,7 +1019,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             ("tab", "workspace"),
             ("p m", "depth"),
             ("1 2 3", "level"),
-            ("s", "put away"),
+            ("s", "put away / restore"),
+            ("e", "open folder"),
             ("f", "fetch"),
             ("o", "sort"),
             ("/", "filter"),
@@ -1007,7 +1102,8 @@ fn draw_help(f: &mut Frame, app: &App, screen: Rect) {
             row("f", "fetch the selected repo and check it again"),
             row("r", "rescan everything"),
             row("1 2 3", "choose how far to put repos away"),
-            row("s", "put the selected repo away (coming next)"),
+            row("s", "put the selected repo away, or restore it (also enter)"),
+            row("e", "open the repo's folder in the file manager"),
             row("esc", "back to home"),
             row("q", "quit"),
         ],

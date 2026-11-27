@@ -99,27 +99,27 @@ impl SafetyReport {
             push(
                 Severity::Preserve,
                 "No remote".into(),
-                Some("The whole history goes into a bundle in the stub.".into()),
+                Some("Hollow keeps .git; Full bundles the whole history.".into()),
             );
         } else if self.unpushed_commits > 0 {
             push(
                 Severity::Preserve,
                 format!("{} on no remote", plural(self.unpushed_commits, "commit")),
-                Some("Saved to a bundle in the stub.".into()),
+                Some("Hollow keeps them in .git; Full bundles them.".into()),
             );
         }
         if self.stashes > 0 {
             push(
                 Severity::Preserve,
                 plural(self.stashes, "stash"),
-                Some("Every stash is saved, not just the newest.".into()),
+                Some("Every stash is kept, not just the newest.".into()),
             );
         }
         if !self.important_ignored.is_empty() {
             push(
                 Severity::Preserve,
                 format!("{} worth keeping", plural(self.important_ignored.len(), "ignored file")),
-                Some(sample(&self.important_ignored, 3)),
+                Some(format!("Left in place: {}", sample(&self.important_ignored, 3))),
             );
         }
         if !self.custom_hooks.is_empty() {
@@ -138,9 +138,9 @@ impl SafetyReport {
         }
         if self.has_submodules {
             push(
-                Severity::Note,
+                Severity::Blocker,
                 "Has submodules".into(),
-                Some("They're cloned again on restore.".into()),
+                Some("Not supported yet: they can hold work of their own.".into()),
             );
         }
         if !self.local_config_keys.is_empty() {
@@ -194,7 +194,7 @@ pub fn check(repo: &Path, fetch: bool, ignored: &[String], info: Option<&RepoInf
         }
     }
 
-    report.dirty = git::run(repo, &["status", "--porcelain"])
+    report.dirty = git::run(repo, &["status", "--porcelain", "--untracked-files=normal"])
         .map(|o| o.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect())
         .unwrap_or_default();
 

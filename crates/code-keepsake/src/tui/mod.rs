@@ -1,3 +1,4 @@
+mod actions;
 mod app;
 mod theme;
 mod ui;
@@ -15,8 +16,10 @@ pub fn run(extra_sources: Vec<PathBuf>, demo: Option<Sandbox>) -> Result<()> {
 
     let mut terminal = ratatui::init();
     let result = (|| -> Result<()> {
-        while !app.quit {
+        // Never exit half way through deleting or restoring.
+        while !app.quit || app.job_running {
             app.pump();
+            app.pump_jobs();
             terminal.draw(|frame| ui::draw(frame, &mut app))?;
             if event::poll(Duration::from_millis(80))? {
                 // Windows reports key releases too; act on presses only.

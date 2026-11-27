@@ -100,12 +100,12 @@ pub fn analyze(target: &RepoTarget, fetch: bool) -> RepoAnalysis {
     }
 
     analysis.stub = stub::read(&target.path);
+    if analysis.stub.is_some() {
+        analysis.status = RepoStatus::Kept;
+        return analysis;
+    }
     if !git::has_git_dir(&target.path) {
-        analysis.status = if analysis.stub.is_some() {
-            RepoStatus::Kept
-        } else {
-            RepoStatus::NotGit
-        };
+        analysis.status = RepoStatus::NotGit;
         return analysis;
     }
 

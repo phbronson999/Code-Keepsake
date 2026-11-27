@@ -19,6 +19,9 @@ pub enum Error {
         stderr: String,
     },
 
+    #[error("left {path} alone: {message}")]
+    Refused { path: PathBuf, message: String },
+
     #[error("git was not found on PATH")]
     GitMissing,
 }

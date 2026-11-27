@@ -20,6 +20,7 @@ use keepsake_core::{
     scan::{collect_targets, spawn_scan, target_for_path, RepoTarget, ScanEvent},
     workspace::{self, WorkspaceFile},
 };
+use super::actions::{Confirm, JobEvent};
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     widgets::{ListState, TableState},
@@ -191,6 +192,10 @@ pub struct App {
     pub screen: Screen,
     pub menu: ListState,
     pub prompt: Option<Prompt>,
+    pub confirm: Option<Confirm>,
+    pub job_running: bool,
+    pub(super) job_tx: Sender<JobEvent>,
+    pub(super) job_rx: Receiver<JobEvent>,
     pub show_help: bool,
 
     pub config: Config,
@@ -231,6 +236,7 @@ fn clean_path_input(input: &str) -> PathBuf {
 impl App {
     pub fn new(launch_sources: Vec<PathBuf>, demo: Option<Sandbox>) -> Self {
         let (tx, rx) = mpsc::channel();
+        let (job_tx, job_rx) = mpsc::channel();
         let config = match &demo {
             Some(sb) => Config {
                 sources: vec![sb.workspaces_dir.clone()],
@@ -242,6 +248,10 @@ impl App {
             screen: Screen::Home,
             menu: ListState::default().with_selected(Some(0)),
             prompt: None,
+            confirm: None,
+            job_running: false,
+            job_tx,
+            job_rx,
             show_help: false,
             config,
             demo,
@@ -409,6 +419,10 @@ impl App {
     }
 
     pub fn start_scan(&mut self, fetch: bool) {
+        if self.job_running {
+            self.notify("Wait for the current job to finish", ToastKind::Warn);
+            return;
+        }
         if self.scan.running {
             self.notify("A scan is already running", ToastKind::Warn);
             return;
@@ -516,7 +530,7 @@ impl App {
         }
     }
 
-    fn rebuild_view(&mut self) {
+    pub(super) fn rebuild_view(&mut self) {
         let keep = self.selected().map(|e| e.target.path.clone());
         let needle = self.filter.to_lowercase();
         let now = self.now;
@@ -594,7 +608,7 @@ impl App {
                 }
                 RepoStatus::Kept => {
                     t.kept += 1;
-                    t.kept_saved += a.stub.as_ref().map_or(0, |s| s.sizes_before.total());
+                    t.kept_saved += a.stub.as_ref().map_or(0, |s| s.level.bytes_freed(&s.sizes_before));
                 }
                 RepoStatus::Missing => t.needs_attention += 1,
                 RepoStatus::NotGit => {}
@@ -603,6 +617,18 @@ impl App {
         t
     }
 
+    /// Moves one row, going round from either end to the other.
+    fn step(&mut self, forward: bool) {
+        let len = self.view.len();
+        if len == 0 {
+            return;
+        }
+        let current = self.table.selected().unwrap_or(0);
+        let next = if forward { current + 1 } else { current + len - 1 };
+        self.table.select(Some(next % len));
+    }
+
+    /// Jumps several rows, stopping at the ends.
     fn move_by(&mut self, delta: isize) {
         if self.view.is_empty() {
             return;
@@ -807,6 +833,10 @@ impl App {
             self.quit = true;
             return;
         }
+        if self.confirm.is_some() {
+            self.on_confirm_key(key);
+            return;
+        }
         if let Some(prompt) = &mut self.prompt {
             match key.code {
                 KeyCode::Esc => self.prompt = None,
@@ -866,8 +896,8 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => self.screen = Screen::Home,
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Down | KeyCode::Char('j') if len > 0 => self.source_list.select(Some((selected + 1).min(len - 1))),
-            KeyCode::Up | KeyCode::Char('k') => self.source_list.select(Some(selected.saturating_sub(1))),
+            KeyCode::Down | KeyCode::Char('j') if len > 0 => self.source_list.select(Some((selected + 1) % len)),
+            KeyCode::Up | KeyCode::Char('k') if len > 0 => self.source_list.select(Some((selected + len - 1) % len)),
             KeyCode::Char('a') | KeyCode::Insert => {
                 self.prompt = Some(Prompt {
                     purpose: PromptPurpose::AddSource,
@@ -907,8 +937,8 @@ impl App {
                     self.rebuild_view();
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => self.move_by(1),
-            KeyCode::Up | KeyCode::Char('k') => self.move_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.step(true),
+            KeyCode::Up | KeyCode::Char('k') => self.step(false),
             KeyCode::PageDown => self.move_by(8),
             KeyCode::PageUp => self.move_by(-8),
             KeyCode::Home | KeyCode::Char('g') => self.move_by(isize::MIN / 2),
@@ -926,13 +956,8 @@ impl App {
             KeyCode::Char(c @ ('1' | '2' | '3')) => self.level = Level::ALL[(c as u8 - b'1') as usize],
             KeyCode::Char('f') => self.fetch_selected(),
             KeyCode::Char('r') | KeyCode::F(5) => self.start_scan(false),
-            KeyCode::Char('s') | KeyCode::Enter => self.notify(
-                format!(
-                    "Putting repos away arrives next. The {} plan on the right is what it will do.",
-                    self.level.label()
-                ),
-                ToastKind::Warn,
-            ),
+            KeyCode::Char('s') | KeyCode::Enter => self.open_confirm(),
+            KeyCode::Char('e') => self.open_folder(),
             _ => {}
         }
     }

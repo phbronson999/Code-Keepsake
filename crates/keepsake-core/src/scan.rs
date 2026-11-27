@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use crate::{
     analysis::{analyze, RepoAnalysis},
-    git,
+    git, stub,
     workspace::{self, WorkspaceFile},
 };
 
@@ -36,7 +36,7 @@ pub enum ScanEvent {
 
 /// Workspace folders often point inside a repo (`app/src-tauri`); this finds the root.
 fn resolve_root(path: &Path) -> PathBuf {
-    if !path.exists() || git::has_git_dir(path) {
+    if !path.exists() || git::has_git_dir(path) || path.join(stub::STUB_FILE).is_file() {
         return path.to_path_buf();
     }
     git::toplevel(path)
@@ -64,7 +64,7 @@ pub fn collect_targets(
         for folder in &ws.folders {
             // (repo root, whether the workspace folder is that root, name override)
             let mut roots: Vec<(PathBuf, bool, Option<String>)> = Vec::new();
-            if depth > 0 && !git::has_git_dir(&folder.path) {
+            if depth > 0 && !git::has_git_dir(&folder.path) && stub::read(&folder.path).is_none() {
                 for repo in workspace::find_repos(&folder.path, depth) {
                     roots.push((repo, true, None));
                 }
